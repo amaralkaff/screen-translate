@@ -1,0 +1,36 @@
+@keyframes gradient-animation {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.animated-gradient-text {
+  position: relative;
+  display: inline-block;
+}
+
+.text-content {
+  background-size: 200% auto;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: gradient-animation linear infinite;
+  position: relative;
+  z-index: 1;
+}
+
+.gradient-overlay {
+  position: absolute;
+  inset: -2px;
+  background-size: 200% auto;
+  animation: gradient-animation linear infinite;
+  border-radius: 0.5rem;
+  z-index: 0;
+  opacity: 0.5;
+}

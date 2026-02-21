@@ -1,0 +1,52 @@
+[package]
+name = "screen-translate"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tray-icon = "0.21"
+arboard = "3.6"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "blocking"] }
+tokio = { version = "1", features = ["rt", "macros", "time"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "1"
+which = "8"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_HiDpi",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSThread"] }
+objc2-app-kit = { version = "0.3", features = [
+    "NSWindow", "NSPanel", "NSView", "NSVisualEffectView",
+    "NSTextField", "NSAlert", "NSEvent", "NSScreen",
+    "NSFont", "NSColor", "NSResponder", "NSApplication",
+    "NSText", "NSControl", "NSGraphics", "NSRunningApplication",
+] }
+core-foundation = "0.10"
+
+[build-dependencies]
+image = { version = "0.25", default-features = false, features = ["png", "ico"] }
+
+[target.'cfg(windows)'.build-dependencies]
+winres = "0.1"
+
+[profile.release]
+strip = true
+lto = true
+opt-level = "s"

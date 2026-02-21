@@ -1,0 +1,13 @@
+/target
+*.exe
+*.pdb
+.env
+CLAUDE.md
+installer-output/
+libretranslate/
+libretranslate-env/
+libretranslate-env
+*.app
+*.dmg
+dmg-staging/
+screen-translate-git-backup/
