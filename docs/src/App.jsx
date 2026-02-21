@@ -134,7 +134,7 @@ function App() {
             </a>
             <span className="text-slate-700">•</span>
             <span className="font-mono bg-slate-800/50 px-3 py-1 rounded-md border border-slate-700">
-              {latestRelease?.tag_name || 'v0.3.3'}
+              {latestRelease?.tag_name || 'v0.1.0'}
             </span>
           </motion.div>
         </motion.div>
