@@ -1,0 +1,31 @@
+# LibreTranslate API endpoint
+api_url = "http://localhost:5000/translate"
+
+# Optional API key (if your LibreTranslate instance requires one)
+# api_key = ""
+
+# Target language — always translate to Indonesian
+target_lang = "id"
+
+# Source language — "auto" detects from the top 5 languages below
+source_lang = "auto"
+
+# Clipboard polling interval in milliseconds
+poll_interval_ms = 300
+
+# Popup display duration in seconds
+popup_duration_secs = 5
+
+# Maximum text length to translate (characters)
+max_text_length = 5000
+
+# LibreTranslate port
+api_port = 5000
+
+# Top 5 source languages + Indonesian target
+# en=English, zh=Chinese, ja=Japanese, es=Spanish, ar=Arabic, id=Indonesian
+load_languages = "en,zh,ja,es,ar,id"
+
+# Start local LibreTranslate server automatically
+# Set to false if using a remote API (e.g., https://libretranslate.com)
+start_local_server = true

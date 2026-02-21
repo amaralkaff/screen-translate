@@ -1,0 +1,263 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # Build the Rust binary
+      - run: cargo build --release
+
+      # Standalone zip (no bundled Python)
+      - name: Create standalone zip
+        shell: pwsh
+        run: Compress-Archive -Path target/release/screen-translate.exe -DestinationPath screen-translate-windows-x64.zip
+
+      # Download Python 3.12 embeddable distribution
+      - name: Download embedded Python
+        shell: pwsh
+        run: |
+          $pyUrl = "https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-amd64.zip"
+          Invoke-WebRequest -Uri $pyUrl -OutFile python-embed.zip
+          Expand-Archive -Path python-embed.zip -DestinationPath libretranslate -Force
+
+      # Configure embedded Python for pip and site-packages
+      - name: Configure Python path file
+        shell: pwsh
+        run: |
+          $pthFile = "libretranslate/python312._pth"
+          $content = Get-Content $pthFile -Raw
+          # Uncomment "import site" and add Lib\site-packages
+          $content = $content -replace '#import site', 'import site'
+          if ($content -notmatch 'Lib\\site-packages') {
+            $content += "`nLib\site-packages`n"
+          }
+          Set-Content $pthFile $content -NoNewline
+
+      # Install pip
+      - name: Install pip
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://bootstrap.pypa.io/get-pip.py" -OutFile get-pip.py
+          libretranslate/python.exe get-pip.py --no-warn-script-location
+
+      # Install setuptools + wheel (needed to build sdist dependencies like flask-swagger)
+      # Pin setuptools to 67.8.0 for pkg_resources compatibility
+      - name: Install build tools
+        shell: pwsh
+        run: |
+          libretranslate/python.exe -m pip install "setuptools==67.8.0" wheel --no-warn-script-location
+
+      # Install LibreTranslate
+      - name: Install LibreTranslate
+        shell: pwsh
+        run: |
+          libretranslate/python.exe -m pip install libretranslate --no-warn-script-location
+        timeout-minutes: 15
+
+      # Download argos-translate language models (per-language isolation)
+      - name: Download language models
+        shell: pwsh
+        run: |
+          $langs = @("zh", "ja", "es", "ar", "id")
+          foreach ($lang in $langs) {
+            $langDir = "argos-lang-$lang"
+            New-Item -ItemType Directory -Path $langDir -Force | Out-Null
+
+            $script = @"
+          import argostranslate.package
+          argostranslate.package.update_package_index()
+          available = argostranslate.package.get_available_packages()
+          for from_c, to_c in [("en", "$lang"), ("$lang", "en")]:
+              pkg = next((p for p in available if p.from_code == from_c and p.to_code == to_c), None)
+              if pkg:
+                  print(f"Downloading {from_c} -> {to_c}...")
+                  path = pkg.download()
+                  argostranslate.package.install_from_path(path)
+          print(f"Installed: {len(argostranslate.package.get_installed_packages())} packages")
+          "@
+            $env:ARGOS_PACKAGES_DIR = "$langDir"
+            libretranslate/python.exe -c $script
+
+            # Also copy to the full bundle directory
+            New-Item -ItemType Directory -Path "libretranslate/argos-packages" -Force | Out-Null
+            Copy-Item -Path "$langDir/*" -Destination "libretranslate/argos-packages/" -Recurse -Force
+          }
+        timeout-minutes: 20
+
+      # Create per-language zip files
+      - name: Create per-language zips
+        shell: pwsh
+        run: |
+          $langs = @("zh", "ja", "es", "ar", "id")
+          foreach ($lang in $langs) {
+            $langDir = "argos-lang-$lang"
+            if (Test-Path $langDir) {
+              Compress-Archive -Path "$langDir/*" -DestinationPath "argos-lang-en-$lang-windows-x64.zip"
+              Write-Host "Created argos-lang-en-$lang-windows-x64.zip"
+            }
+          }
+
+      # Remove unused heavy packages to slim down installer
+      # Keep: setuptools, pkg_resources, onnxruntime, pymupdf, numpy, ctranslate2
+      - name: Remove unused packages
+        shell: pwsh
+        run: |
+          $sitePackages = "libretranslate/Lib/site-packages"
+          $remove = @("torch", "stanza", "torchgen", "spacy", "blis", "sympy", "mpmath", "networkx", "pygments", "pip")
+          foreach ($pkg in $remove) {
+            # Remove package directory (exact match)
+            $dir = Join-Path $sitePackages $pkg
+            if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
+            # Remove dist-info directories
+            Get-ChildItem -Path $sitePackages -Directory -Filter "$pkg-*.dist-info" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+            Get-ChildItem -Path $sitePackages -Directory -Filter "${pkg}_*.dist-info" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+          }
+          # Verify critical packages survived
+          if (-not (Test-Path "$sitePackages/pkg_resources")) { Write-Error "pkg_resources is missing!" }
+          if (-not (Test-Path "$sitePackages/setuptools")) { Write-Error "setuptools is missing!" }
+
+      # Patch argostranslate to make stanza/spacy optional (removed above)
+      - name: Patch argostranslate for optional stanza
+        shell: pwsh
+        run: |
+          # Patch sbd.py: make "import stanza" optional
+          $sbdFile = "libretranslate/Lib/site-packages/argostranslate/sbd.py"
+          $sbdContent = Get-Content $sbdFile -Raw
+          $sbdContent = $sbdContent -replace '(?m)^import stanza$', "try:`r`n    import stanza`r`nexcept ImportError:`r`n    stanza = None"
+          Set-Content $sbdFile $sbdContent -NoNewline
+
+          # Patch translate.py: guard stanza usage with None check
+          $transFile = "libretranslate/Lib/site-packages/argostranslate/translate.py"
+          $transContent = Get-Content $transFile -Raw
+          $transContent = $transContent -replace '("stanza" in str\(pkg\.packaged_sbd_path\)):', '$1 and sbd.stanza is not None:'
+          $transContent = $transContent -replace '(settings\.chunk_type == settings\.ChunkType\.STANZA):', '$1 and sbd.stanza is not None:'
+          Set-Content $transFile $transContent -NoNewline
+
+      # Verify the full import chain works before building installer
+      - name: Verify LibreTranslate imports
+        shell: pwsh
+        run: |
+          libretranslate/python.exe -c "from libretranslate.app import create_app; print('Import OK')"
+        env:
+          ARGOS_PACKAGES_DIR: libretranslate/argos-packages
+
+      # Create base bundle (Python + LibreTranslate, no language models)
+      - name: Create base bundle zip
+        shell: pwsh
+        run: |
+          $tempDir = "libretranslate-base"
+          Copy-Item -Path "libretranslate" -Destination $tempDir -Recurse
+          Remove-Item -Path "$tempDir/argos-packages" -Recurse -Force -ErrorAction SilentlyContinue
+          Compress-Archive -Path "$tempDir/*" -DestinationPath libretranslate-base-windows-x64.zip
+          Remove-Item -Path $tempDir -Recurse -Force
+
+      # Zip full LibreTranslate bundle (base + all languages) for standalone users
+      - name: Create full bundle zip
+        shell: pwsh
+        run: |
+          Compress-Archive -Path libretranslate/* -DestinationPath libretranslate-bundle-windows-x64.zip
+
+      # Install Inno Setup
+      - name: Install Inno Setup
+        run: choco install innosetup -y
+
+      # Extract version from tag (v0.2.0 -> 0.2.0)
+      - name: Extract version
+        id: version
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+
+      # Build installer (small — only exe, downloads bundle on demand)
+      - name: Build installer
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=${{ steps.version.outputs.VERSION }} installer.iss
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-artifacts
+          path: |
+            screen-translate-windows-x64.zip
+            libretranslate-base-windows-x64.zip
+            libretranslate-bundle-windows-x64.zip
+            argos-lang-en-*-windows-x64.zip
+            installer-output/ScreenTranslate-${{ steps.version.outputs.VERSION }}-setup.exe
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo build --release
+
+      # Standalone zip (no bundled Python)
+      - name: Create standalone zip
+        run: |
+          cd target/release
+          zip ../../screen-translate-macos-arm64.zip screen-translate
+
+      # Extract version from tag (v0.2.0 -> 0.2.0)
+      - name: Extract version
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      # Create Python 3.12 venv with LibreTranslate
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Create LibreTranslate venv
+        run: |
+          python3 -m venv --copies libretranslate
+          libretranslate/bin/pip install --upgrade pip setuptools wheel
+          libretranslate/bin/pip install libretranslate
+          libretranslate/bin/pip install 'setuptools==67.8.0'
+        timeout-minutes: 15
+
+      # Build .app bundle with bundled LibreTranslate + DMG
+      - name: Create .app bundle and DMG
+        run: bash scripts/create-macos-bundle.sh "${{ steps.version.outputs.VERSION }}" --with-libretranslate
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-artifacts
+          path: |
+            screen-translate-macos-arm64.zip
+            ScreenTranslate-${{ steps.version.outputs.VERSION }}-macOS.dmg
+
+  release:
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/screen-translate-windows-x64.zip
+            artifacts/libretranslate-base-windows-x64.zip
+            artifacts/libretranslate-bundle-windows-x64.zip
+            artifacts/argos-lang-en-*-windows-x64.zip
+            artifacts/screen-translate-macos-arm64.zip
+            artifacts/ScreenTranslate-*-macOS.dmg
+            artifacts/installer-output/*
+          generate_release_notes: true
