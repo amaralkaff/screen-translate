@@ -154,10 +154,9 @@ impl Config {
                 .lines()
                 .map(|line| {
                     let trimmed = line.trim();
-                    if trimmed.starts_with(key) && trimmed.contains('=') && !trimmed.starts_with('#') {
-                        found = true;
-                        format!("{} = \"{}\"", key, value)
-                    } else if trimmed.starts_with(&format!("# {}", key)) && trimmed.contains('=') {
+                    let is_active = trimmed.starts_with(key) && trimmed.contains('=') && !trimmed.starts_with('#');
+                    let is_commented = trimmed.starts_with(&format!("# {}", key)) && trimmed.contains('=');
+                    if is_active || is_commented {
                         found = true;
                         format!("{} = \"{}\"", key, value)
                     } else {
