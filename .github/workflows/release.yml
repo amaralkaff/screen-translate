@@ -164,12 +164,6 @@ jobs:
           Compress-Archive -Path "$tempDir/*" -DestinationPath libretranslate-base-windows-x64.zip
           Remove-Item -Path $tempDir -Recurse -Force
 
-      # Zip full LibreTranslate bundle (base + all languages) for standalone users
-      - name: Create full bundle zip
-        shell: pwsh
-        run: |
-          Compress-Archive -Path libretranslate/* -DestinationPath libretranslate-bundle-windows-x64.zip
-
       # Install Inno Setup
       - name: Install Inno Setup
         run: choco install innosetup -y
@@ -194,7 +188,6 @@ jobs:
           path: |
             screen-translate-windows-x64.zip
             libretranslate-base-windows-x64.zip
-            libretranslate-bundle-windows-x64.zip
             argos-lang-en-*-windows-x64.zip
             installer-output/ScreenTranslate-${{ steps.version.outputs.VERSION }}-setup.exe
 
@@ -232,10 +225,11 @@ jobs:
           libretranslate/bin/pip install 'setuptools==67.8.0'
         timeout-minutes: 15
 
-      # Download language models into the venv so they're bundled in the DMG
+      # Download most popular language models to bundle in the DMG
+      # Only top 8 to keep DMG under 2GB GitHub limit. Others download on first use.
       - name: Download language models
         run: |
-          LANGS="ar zh fr de hi id it ja ko fa pl pt ru es tr uk vi"
+          LANGS="zh ja ko es fr ru fa id"
           mkdir -p libretranslate/argos-packages
           export ARGOS_PACKAGES_DIR="$(pwd)/libretranslate/argos-packages"
           for lang in $LANGS; do
@@ -283,7 +277,6 @@ jobs:
           files: |
             artifacts/screen-translate-windows-x64.zip
             artifacts/libretranslate-base-windows-x64.zip
-            artifacts/libretranslate-bundle-windows-x64.zip
             artifacts/argos-lang-en-*-windows-x64.zip
             artifacts/screen-translate-macos-arm64.zip
             artifacts/ScreenTranslate-*-macOS.dmg
