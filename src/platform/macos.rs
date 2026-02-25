@@ -372,6 +372,13 @@ pub fn show_error(title: &str, msg: &str) {
     }
 }
 
+/// Open System Settings to the Input Monitoring pane.
+pub fn open_input_monitoring_settings() {
+    let _ = std::process::Command::new("open")
+        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")
+        .spawn();
+}
+
 pub fn show_info(title: &str, msg: &str) {
     if let Some(mtm) = MainThreadMarker::new() {
         let alert = NSAlert::new(mtm);

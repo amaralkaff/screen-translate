@@ -207,8 +207,10 @@ fn main() {
             tracing::error!("{}", e);
             platform::show_error(
                 "Screen Translate — Permission Required",
-                &format!("{}\n\nThe app will now exit.", e),
+                &format!("{}\n\nThe app will now exit.\nOpening System Settings for you...", e),
             );
+            #[cfg(target_os = "macos")]
+            platform::open_input_monitoring_settings();
             return;
         }
     };
