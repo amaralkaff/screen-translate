@@ -404,6 +404,13 @@ fn perform_dmg_update(dmg_path: &PathBuf, app_root: &PathBuf) -> Result<()> {
         .args(["detach", &mount_point])
         .status();
 
+    // Re-sign the .app bundle to help macOS preserve TCC permissions
+    tracing::info!("Re-signing .app bundle...");
+    let _ = Command::new("codesign")
+        .args(["--force", "--deep", "-s", "-"])
+        .arg(app_root)
+        .status();
+
     tracing::info!("DMG update applied — relaunching...");
     Command::new("open")
         .arg("-a")
@@ -441,6 +448,15 @@ fn perform_app_binary_swap(
         std::fs::set_permissions(&current_exe, std::fs::Permissions::from_mode(0o755))
             .context("Failed to set executable permission")?;
     }
+
+    // Re-sign the .app bundle so macOS can match it to existing TCC permissions
+    // by bundle identifier. Without Developer ID signing, permissions may still
+    // need to be re-granted, but this gives macOS the best chance to keep them.
+    tracing::info!("Re-signing .app bundle...");
+    let _ = Command::new("codesign")
+        .args(["--force", "--deep", "-s", "-"])
+        .arg(app_root)
+        .status();
 
     tracing::info!("Binary update applied — relaunching .app...");
     Command::new("open")

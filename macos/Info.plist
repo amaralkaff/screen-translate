@@ -28,5 +28,7 @@
     <true/>
     <key>NSInputMonitoringUsageDescription</key>
     <string>Screen Translate needs Input Monitoring to detect text selection anywhere on screen.</string>
+    <key>NSAccessibilityUsageDescription</key>
+    <string>Screen Translate needs Accessibility to copy selected text for translation.</string>
 </dict>
 </plist>
