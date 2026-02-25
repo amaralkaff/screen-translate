@@ -225,32 +225,8 @@ jobs:
           libretranslate/bin/pip install 'setuptools==67.8.0'
         timeout-minutes: 15
 
-      # Download most popular language models to bundle in the DMG
-      # Only top 8 to keep DMG under 2GB GitHub limit. Others download on first use.
-      - name: Download language models
-        run: |
-          LANGS="zh ja ko es fr ru fa id"
-          mkdir -p libretranslate/argos-packages
-          export ARGOS_PACKAGES_DIR="$(pwd)/libretranslate/argos-packages"
-          for lang in $LANGS; do
-            libretranslate/bin/python3 -c "
-          import argostranslate.package
-          argostranslate.package.update_package_index()
-          available = argostranslate.package.get_available_packages()
-          for from_c, to_c in [('en', '${lang}'), ('${lang}', 'en')]:
-              pkg = next((p for p in available if p.from_code == from_c and p.to_code == to_c), None)
-              if pkg:
-                  print(f'Downloading {from_c} -> {to_c}...')
-                  path = pkg.download()
-                  argostranslate.package.install_from_path(path)
-              else:
-                  print(f'No package for {from_c} -> {to_c}, skipping')
-          print(f'Total installed: {len(argostranslate.package.get_installed_packages())} packages')
-          "
-          done
-          # Write manifest of installed languages
-          echo "en,$(echo $LANGS | tr ' ' ',')" > libretranslate/installed-languages.txt
-        timeout-minutes: 30
+      # No language models bundled — users select and download on first launch.
+      # This keeps the DMG small (~200MB vs 2GB).
 
       # Build .app bundle with bundled LibreTranslate + DMG
       - name: Create .app bundle and DMG

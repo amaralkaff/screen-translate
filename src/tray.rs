@@ -2,6 +2,11 @@ use anyhow::Result;
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
+/// Public accessor for language display names (used by main.rs for notifications).
+pub fn lang_display_name_pub(code: &str) -> &str {
+    lang_display_name(code)
+}
+
 fn lang_display_name(code: &str) -> &str {
     match code {
         "en" => "English",
@@ -49,7 +54,11 @@ pub struct Tray {
 }
 
 impl Tray {
-    pub fn new(languages: &[String], current_lang: &str) -> Result<Self> {
+    pub fn new(
+        languages: &[String],
+        current_lang: &str,
+        installed_languages: &std::collections::HashSet<String>,
+    ) -> Result<Self> {
         let menu = Menu::new();
         let monitor_item = CheckMenuItem::new("Monitoring Active", true, true, None);
         menu.append(&monitor_item)?;
@@ -57,7 +66,12 @@ impl Tray {
         let lang_submenu = Submenu::new("Target Language", true);
         let mut lang_items = Vec::new();
         for code in languages {
-            let label = format!("{} ({})", lang_display_name(code), code);
+            let name = lang_display_name(code);
+            let label = if installed_languages.contains(code.as_str()) {
+                format!("{} ({})", name, code)
+            } else {
+                format!("{} ({}) ⬇", name, code)
+            };
             let checked = code == current_lang;
             let item = CheckMenuItem::new(label, true, checked, None);
             lang_submenu.append(&item)?;
@@ -89,6 +103,17 @@ impl Tray {
             lang_items,
             update_item,
         })
+    }
+
+    /// Update the label of a language item to remove the download indicator.
+    pub fn mark_language_installed(&self, code: &str) {
+        for (item, item_code) in &self.lang_items {
+            if item_code == code {
+                let label = format!("{} ({})", lang_display_name(code), code);
+                item.set_text(label);
+                break;
+            }
+        }
     }
 
     pub fn handle_menu_event(&self) -> TrayAction {

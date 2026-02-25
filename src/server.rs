@@ -158,17 +158,17 @@ impl LibreTranslateServer {
             cmd.env("ARGOS_PACKAGES_DIR", &bundled_dir);
         }
 
-        // Only use --load-only if language packages are already installed.
-        // On first launch, use --update-models so LibreTranslate downloads them.
-        if Self::has_language_packages(&exe) {
-            // Prefer installer manifest over config (it reflects what was actually installed)
-            let effective_languages = Self::read_installed_languages(&exe)
-                .unwrap_or_else(|| load_languages.to_string());
-            cmd.args(["--load-only", &effective_languages]);
+        // Use --load-only with whatever languages are installed.
+        // If none are installed yet, start with just English so the server boots fast.
+        // Users download additional languages on demand via the tray menu.
+        let effective_languages = if Self::has_language_packages(&exe) {
+            Self::read_installed_languages(&exe)
+                .unwrap_or_else(|| load_languages.to_string())
         } else {
-            tracing::info!("No language packages found — first launch will download models");
-            cmd.arg("--update-models");
-        }
+            tracing::info!("No language packages found — server will start with English only");
+            "en".to_string()
+        };
+        cmd.args(["--load-only", &effective_languages]);
 
         cmd.stdin(Stdio::null())
             .stdout(Stdio::null());
@@ -454,6 +454,205 @@ impl Drop for LibreTranslateServer {
         }
         let _ = child.wait();
     }
+}
+
+/// Find the Python executable used by the bundled LibreTranslate environment.
+/// This is the same logic as `find_executable` but only returns Python paths (not LT scripts).
+pub fn find_python_exe(python_path: Option<&str>) -> Option<PathBuf> {
+    if let Some(path) = python_path {
+        let p = PathBuf::from(path);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            #[cfg(target_os = "windows")]
+            {
+                let embedded_py = exe_dir.join("libretranslate").join("python.exe");
+                if embedded_py.exists() {
+                    return Some(embedded_py);
+                }
+                let venv_py = exe_dir.join("libretranslate").join("Scripts").join("python.exe");
+                if venv_py.exists() {
+                    return Some(venv_py);
+                }
+            }
+            #[cfg(target_os = "macos")]
+            if let Some(contents_dir) = exe_dir.parent() {
+                let candidate = contents_dir
+                    .join("Resources")
+                    .join("libretranslate")
+                    .join("bin")
+                    .join("python3");
+                if candidate.exists() {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Find the argos-packages directory, creating it if needed.
+/// Returns the path where language models should be stored.
+pub fn find_or_create_packages_dir(python_exe: &std::path::Path) -> Option<PathBuf> {
+    // Check for existing bundled packages dir
+    if let Some(dir) = LibreTranslateServer::find_bundled_packages(python_exe) {
+        return Some(dir);
+    }
+
+    // Create packages dir next to the Python environment
+    let candidates = [
+        python_exe.parent().map(|p| p.join("argos-packages")),
+        python_exe.parent().and_then(|p| p.parent()).map(|p| p.join("argos-packages")),
+    ];
+    candidates
+        .into_iter()
+        .flatten()
+        .find(|candidate| std::fs::create_dir_all(candidate).is_ok())
+}
+
+/// Download a specific language pair using the bundled Python/argostranslate.
+/// Downloads both en→lang and lang→en models.
+/// Returns Ok(()) on success.
+pub fn download_language(
+    python_exe: &std::path::Path,
+    packages_dir: &std::path::Path,
+    lang: &str,
+) -> anyhow::Result<()> {
+    let script = format!(
+        r#"
+import argostranslate.package
+argostranslate.package.update_package_index()
+available = argostranslate.package.get_available_packages()
+downloaded = 0
+for from_c, to_c in [("en", "{lang}"), ("{lang}", "en")]:
+    pkg = next((p for p in available if p.from_code == from_c and p.to_code == to_c), None)
+    if pkg:
+        print(f"Downloading {{from_c}} -> {{to_c}}...")
+        path = pkg.download()
+        argostranslate.package.install_from_path(path)
+        downloaded += 1
+    else:
+        print(f"No package for {{from_c}} -> {{to_c}}, skipping")
+print(f"Done: {{downloaded}} packages installed")
+"#,
+        lang = lang,
+    );
+
+    let mut cmd = std::process::Command::new(python_exe);
+    cmd.args(["-c", &script]);
+    cmd.env("ARGOS_PACKAGES_DIR", packages_dir);
+
+    #[cfg(target_os = "windows")]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    tracing::info!("Downloading language models for '{}'...", lang);
+    let output = cmd.output()?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stdout.is_empty() {
+        tracing::info!("argos download: {}", stdout.trim());
+    }
+    if !stderr.is_empty() {
+        tracing::warn!("argos download stderr: {}", stderr.trim());
+    }
+
+    if !output.status.success() {
+        anyhow::bail!("Language download failed (exit {})", output.status);
+    }
+
+    // Update the installed-languages.txt manifest
+    update_installed_languages_manifest(python_exe, packages_dir);
+
+    Ok(())
+}
+
+/// Update the installed-languages.txt manifest by querying argostranslate for installed packages.
+fn update_installed_languages_manifest(python_exe: &std::path::Path, packages_dir: &std::path::Path) {
+    let script = r#"
+import argostranslate.package
+pkgs = argostranslate.package.get_installed_packages()
+codes = set()
+for p in pkgs:
+    codes.add(p.from_code)
+    codes.add(p.to_code)
+# Always include English
+codes.add("en")
+print(",".join(sorted(codes)))
+"#;
+
+    let mut cmd = std::process::Command::new(python_exe);
+    cmd.args(["-c", script]);
+    cmd.env("ARGOS_PACKAGES_DIR", packages_dir);
+
+    #[cfg(target_os = "windows")]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    if let Ok(output) = cmd.output() {
+        if output.status.success() {
+            let languages = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            // Write manifest next to packages dir
+            let manifest = packages_dir.parent()
+                .unwrap_or(packages_dir)
+                .join("installed-languages.txt");
+            if let Err(e) = std::fs::write(&manifest, &languages) {
+                tracing::warn!("Failed to write language manifest: {}", e);
+            } else {
+                tracing::info!("Updated language manifest: {}", languages);
+            }
+        }
+    }
+}
+
+/// Check which languages are currently installed by reading the manifest or querying packages.
+pub fn get_installed_languages(python_path: Option<&str>) -> std::collections::HashSet<String> {
+    let mut langs = std::collections::HashSet::new();
+    langs.insert("en".to_string()); // English is always available
+
+    let python_exe = match find_python_exe(python_path) {
+        Some(p) => p,
+        None => return langs,
+    };
+
+    // Try reading the manifest first (fast)
+    if let Some(manifest_contents) = LibreTranslateServer::read_installed_languages(&python_exe) {
+        for code in manifest_contents.split(',') {
+            let code = code.trim();
+            if !code.is_empty() {
+                langs.insert(code.to_string());
+            }
+        }
+        return langs;
+    }
+
+    // Check if any packages exist at all
+    if LibreTranslateServer::has_language_packages(&python_exe) {
+        // Packages exist but no manifest — query Python
+        if let Some(packages_dir) = find_or_create_packages_dir(&python_exe) {
+            update_installed_languages_manifest(&python_exe, &packages_dir);
+            // Re-read the freshly written manifest
+            if let Some(contents) = LibreTranslateServer::read_installed_languages(&python_exe) {
+                for code in contents.split(',') {
+                    let code = code.trim();
+                    if !code.is_empty() {
+                        langs.insert(code.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    langs
 }
 
 fn dir_has_entries(path: &std::path::Path) -> bool {

@@ -101,8 +101,13 @@ fn main() {
         .filter(|c| c != "en")
         .collect();
 
+    // Check which languages are already installed (for tray UI indicators)
+    let installed_languages = Arc::new(RwLock::new(
+        server::get_installed_languages(config.python_path.as_deref()),
+    ));
+
     // Create tray icon FIRST so user sees the app is running
-    let tray = match tray::Tray::new(&languages, &config.target_lang) {
+    let tray = match tray::Tray::new(&languages, &config.target_lang, &installed_languages.read().unwrap()) {
         Ok(t) => t,
         Err(e) => {
             tracing::error!("Failed to create tray icon: {}", e);
@@ -153,6 +158,9 @@ fn main() {
             }
         }
     };
+
+    // Channel for language download completion notifications
+    let (lang_download_tx, lang_download_rx) = mpsc::channel::<(String, bool)>();
 
     let monitoring = std::sync::Arc::new(AtomicBool::new(true));
 
@@ -275,6 +283,22 @@ fn main() {
             );
         }
 
+        // Check for language download completions
+        while let Ok((lang_code, success)) = lang_download_rx.try_recv() {
+            if success {
+                tray.mark_language_installed(&lang_code);
+                platform::show_info(
+                    "Screen Translate",
+                    &format!("{} language model installed.\nRestart the app to use it.", tray::lang_display_name_pub(&lang_code)),
+                );
+            } else {
+                platform::show_error(
+                    "Screen Translate",
+                    &format!("Failed to download {} language model.\nCheck your internet connection.", tray::lang_display_name_pub(&lang_code)),
+                );
+            }
+        }
+
         if let Some(notification) = update_notify.lock().unwrap().take() {
             match notification {
                 UpdateNotification::UpToDate => {
@@ -311,6 +335,49 @@ fn main() {
                 *target_lang.write().unwrap() = code.clone();
                 tracing::info!("Target language changed to: {}", code);
                 config::Config::save_target_lang(&code);
+
+                // If language isn't installed, download it in the background
+                let needs_download = !installed_languages.read().unwrap().contains(&code);
+                if needs_download {
+                    platform::show_info(
+                        "Screen Translate",
+                        &format!("Downloading {} language model...\nThis may take a minute.", tray::lang_display_name_pub(&code)),
+                    );
+                    let python_path = config.python_path.clone();
+                    let lang_code = code.clone();
+                    let installed_ref = installed_languages.clone();
+                    let dl_done_tx = lang_download_tx.clone();
+                    std::thread::spawn(move || {
+                        tracing::info!("Language '{}' not installed, downloading...", lang_code);
+                        let python_exe = match server::find_python_exe(python_path.as_deref()) {
+                            Some(p) => p,
+                            None => {
+                                tracing::error!("Cannot find Python to download language models");
+                                let _ = dl_done_tx.send((lang_code, false));
+                                return;
+                            }
+                        };
+                        let packages_dir = match server::find_or_create_packages_dir(&python_exe) {
+                            Some(d) => d,
+                            None => {
+                                tracing::error!("Cannot find/create packages directory");
+                                let _ = dl_done_tx.send((lang_code, false));
+                                return;
+                            }
+                        };
+                        match server::download_language(&python_exe, &packages_dir, &lang_code) {
+                            Ok(()) => {
+                                tracing::info!("Language '{}' downloaded successfully", lang_code);
+                                installed_ref.write().unwrap().insert(lang_code.clone());
+                                let _ = dl_done_tx.send((lang_code, true));
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to download '{}': {}", lang_code, e);
+                                let _ = dl_done_tx.send((lang_code, false));
+                            }
+                        }
+                    });
+                }
             }
             TrayAction::CheckForUpdates => {
                 let notify = update_notify.clone();
