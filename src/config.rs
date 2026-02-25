@@ -37,7 +37,7 @@ impl Default for Config {
             max_text_length: 5000,
             python_path: None,
             api_port: default_port,
-            load_languages: "en,zh,ja,es,ar,id".into(),
+            load_languages: "en,ar,zh,fr,de,hi,id,it,ja,ko,fa,pl,pt,ru,es,tr,uk,vi".into(),
             auto_update: true,
             start_local_server: true,
         }
@@ -61,12 +61,31 @@ impl Config {
         }
     }
 
+    /// Known old defaults that should be migrated to the current default.
+    const OLD_LOAD_LANGUAGES_DEFAULTS: &[&str] = &[
+        "en,zh,ja,es,ar,id",
+    ];
+
     pub fn load() -> Result<Self> {
         let path = Self::config_path();
         if path.exists() {
             let contents = std::fs::read_to_string(&path)?;
-            let config: Config = toml::from_str(&contents)?;
+            let mut config: Config = toml::from_str(&contents)?;
             tracing::info!("Loaded config from {}", path.display());
+
+            // Migrate old default load_languages to include all supported languages
+            let trimmed: String = config.load_languages.chars().filter(|c| !c.is_whitespace()).collect();
+            if Self::OLD_LOAD_LANGUAGES_DEFAULTS.contains(&trimmed.as_str()) {
+                let new_default = Config::default().load_languages;
+                tracing::info!(
+                    "Migrating load_languages from \"{}\" to \"{}\"",
+                    config.load_languages,
+                    new_default
+                );
+                config.load_languages = new_default;
+                Self::save_field(&path, "load_languages", &config.load_languages);
+            }
+
             Ok(config)
         } else {
             // Auto-create config directory and default config
@@ -101,7 +120,8 @@ impl Config {
 # api_port = {}
 
 # Languages to load (comma-separated ISO 639 codes)
-# load_languages = \"en,zh,ja,es,ar,id\"
+# Supported: en,ar,az,ca,cs,da,de,el,eo,es,fa,fi,fr,ga,he,hi,hu,id,it,ja,ko,nl,pl,pt,ru,sk,sv,th,tr,uk,vi,zh
+# load_languages = \"en,ar,zh,fr,de,hi,id,it,ja,ko,fa,pl,pt,ru,es,tr,uk,vi\"
 
 # Path to Python executable (for starting LibreTranslate)
 # python_path = \"\"
@@ -124,5 +144,43 @@ impl Config {
 
     fn config_path() -> PathBuf {
         Self::app_dir().join("config.toml")
+    }
+
+    /// Update a single field in the config file, preserving the rest.
+    fn save_field(path: &std::path::Path, key: &str, value: &str) {
+        if let Ok(contents) = std::fs::read_to_string(path) {
+            let mut found = false;
+            let updated: Vec<String> = contents
+                .lines()
+                .map(|line| {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with(key) && trimmed.contains('=') && !trimmed.starts_with('#') {
+                        found = true;
+                        format!("{} = \"{}\"", key, value)
+                    } else if trimmed.starts_with(&format!("# {}", key)) && trimmed.contains('=') {
+                        found = true;
+                        format!("{} = \"{}\"", key, value)
+                    } else {
+                        line.to_string()
+                    }
+                })
+                .collect();
+
+            let new_contents = if found {
+                updated.join("\n")
+            } else {
+                format!("{} = \"{}\"\n{}", key, value, contents)
+            };
+
+            if let Err(e) = std::fs::write(path, new_contents) {
+                tracing::warn!("Failed to save {} to config: {}", key, e);
+            }
+        }
+    }
+
+    /// Persist target_lang change to config file so it survives restarts.
+    pub fn save_target_lang(lang: &str) {
+        Self::save_field(&Self::config_path(), "target_lang", lang);
+        tracing::info!("Saved target_lang = \"{}\" to config", lang);
     }
 }

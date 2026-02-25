@@ -69,7 +69,7 @@ jobs:
       - name: Download language models
         shell: pwsh
         run: |
-          $langs = @("zh", "ja", "es", "ar", "id")
+          $langs = @("ar", "zh", "fr", "de", "hi", "id", "it", "ja", "ko", "fa", "pl", "pt", "ru", "es", "tr", "uk", "vi")
           foreach ($lang in $langs) {
             $langDir = "argos-lang-$lang"
             New-Item -ItemType Directory -Path $langDir -Force | Out-Null
@@ -84,6 +84,8 @@ jobs:
                   print(f"Downloading {from_c} -> {to_c}...")
                   path = pkg.download()
                   argostranslate.package.install_from_path(path)
+              else:
+                  print(f"No package for {from_c} -> {to_c}, skipping")
           print(f"Installed: {len(argostranslate.package.get_installed_packages())} packages")
           "@
             $env:ARGOS_PACKAGES_DIR = "$langDir"
@@ -93,13 +95,13 @@ jobs:
             New-Item -ItemType Directory -Path "libretranslate/argos-packages" -Force | Out-Null
             Copy-Item -Path "$langDir/*" -Destination "libretranslate/argos-packages/" -Recurse -Force
           }
-        timeout-minutes: 20
+        timeout-minutes: 30
 
       # Create per-language zip files
       - name: Create per-language zips
         shell: pwsh
         run: |
-          $langs = @("zh", "ja", "es", "ar", "id")
+          $langs = @("ar", "zh", "fr", "de", "hi", "id", "it", "ja", "ko", "fa", "pl", "pt", "ru", "es", "tr", "uk", "vi")
           foreach ($lang in $langs) {
             $langDir = "argos-lang-$lang"
             if (Test-Path $langDir) {
@@ -229,6 +231,32 @@ jobs:
           libretranslate/bin/pip install libretranslate
           libretranslate/bin/pip install 'setuptools==67.8.0'
         timeout-minutes: 15
+
+      # Download language models into the venv so they're bundled in the DMG
+      - name: Download language models
+        run: |
+          LANGS="ar zh fr de hi id it ja ko fa pl pt ru es tr uk vi"
+          mkdir -p libretranslate/argos-packages
+          export ARGOS_PACKAGES_DIR="$(pwd)/libretranslate/argos-packages"
+          for lang in $LANGS; do
+            libretranslate/bin/python3 -c "
+          import argostranslate.package
+          argostranslate.package.update_package_index()
+          available = argostranslate.package.get_available_packages()
+          for from_c, to_c in [('en', '${lang}'), ('${lang}', 'en')]:
+              pkg = next((p for p in available if p.from_code == from_c and p.to_code == to_c), None)
+              if pkg:
+                  print(f'Downloading {from_c} -> {to_c}...')
+                  path = pkg.download()
+                  argostranslate.package.install_from_path(path)
+              else:
+                  print(f'No package for {from_c} -> {to_c}, skipping')
+          print(f'Total installed: {len(argostranslate.package.get_installed_packages())} packages')
+          "
+          done
+          # Write manifest of installed languages
+          echo "en,$(echo $LANGS | tr ' ' ',')" > libretranslate/installed-languages.txt
+        timeout-minutes: 30
 
       # Build .app bundle with bundled LibreTranslate + DMG
       - name: Create .app bundle and DMG

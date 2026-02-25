@@ -310,6 +310,7 @@ fn main() {
             TrayAction::ChangeLanguage(code) => {
                 *target_lang.write().unwrap() = code.clone();
                 tracing::info!("Target language changed to: {}", code);
+                config::Config::save_target_lang(&code);
             }
             TrayAction::CheckForUpdates => {
                 let notify = update_notify.clone();

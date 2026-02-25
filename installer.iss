@@ -67,16 +67,28 @@ var
   DetailsVisible: Boolean;
 
 const
-  LANG_COUNT = 5;
+  LANG_COUNT = 17;
 
 function GetLangCode(Index: Integer): String;
 begin
   case Index of
     0: Result := 'id';
-    1: Result := 'zh';
-    2: Result := 'ja';
-    3: Result := 'es';
-    4: Result := 'ar';
+    1: Result := 'ar';
+    2: Result := 'zh';
+    3: Result := 'fr';
+    4: Result := 'de';
+    5: Result := 'hi';
+    6: Result := 'it';
+    7: Result := 'ja';
+    8: Result := 'ko';
+    9: Result := 'fa';
+    10: Result := 'pl';
+    11: Result := 'pt';
+    12: Result := 'ru';
+    13: Result := 'es';
+    14: Result := 'tr';
+    15: Result := 'uk';
+    16: Result := 'vi';
   else
     Result := '';
   end;
@@ -86,10 +98,22 @@ function GetLangName(Index: Integer): String;
 begin
   case Index of
     0: Result := 'Indonesian';
-    1: Result := 'Chinese';
-    2: Result := 'Japanese';
-    3: Result := 'Spanish';
-    4: Result := 'Arabic';
+    1: Result := 'Arabic';
+    2: Result := 'Chinese';
+    3: Result := 'French';
+    4: Result := 'German';
+    5: Result := 'Hindi';
+    6: Result := 'Italian';
+    7: Result := 'Japanese';
+    8: Result := 'Korean';
+    9: Result := 'Persian';
+    10: Result := 'Polish';
+    11: Result := 'Portuguese';
+    12: Result := 'Russian';
+    13: Result := 'Spanish';
+    14: Result := 'Turkish';
+    15: Result := 'Ukrainian';
+    16: Result := 'Vietnamese';
   else
     Result := '';
   end;
@@ -98,11 +122,23 @@ end;
 function GetLangLabel(Index: Integer): String;
 begin
   case Index of
-    0: Result := 'Indonesian (id)    ~30 MB  (required)';
-    1: Result := 'Chinese (zh)       ~60 MB';
-    2: Result := 'Japanese (ja)      ~50 MB';
-    3: Result := 'Spanish (es)       ~40 MB';
-    4: Result := 'Arabic (ar)        ~50 MB';
+    0: Result := 'Indonesian (id)    ~30 MB  (default target)';
+    1: Result := 'Arabic (ar)        ~50 MB';
+    2: Result := 'Chinese (zh)       ~60 MB';
+    3: Result := 'French (fr)        ~40 MB';
+    4: Result := 'German (de)        ~40 MB';
+    5: Result := 'Hindi (hi)         ~50 MB';
+    6: Result := 'Italian (it)       ~40 MB';
+    7: Result := 'Japanese (ja)      ~50 MB';
+    8: Result := 'Korean (ko)        ~50 MB';
+    9: Result := 'Persian (fa)       ~40 MB';
+    10: Result := 'Polish (pl)        ~40 MB';
+    11: Result := 'Portuguese (pt)    ~40 MB';
+    12: Result := 'Russian (ru)       ~40 MB';
+    13: Result := 'Spanish (es)       ~40 MB';
+    14: Result := 'Turkish (tr)       ~40 MB';
+    15: Result := 'Ukrainian (uk)     ~40 MB';
+    16: Result := 'Vietnamese (vi)    ~40 MB';
   else
     Result := '';
   end;
@@ -173,7 +209,7 @@ begin
   { --- Language selection page --- }
   LangPage := CreateCustomPage(wpSelectTasks,
     'Language Selection',
-    'Select which languages to install (English and Indonesian are always included).');
+    'Select which languages to install (English is always included).');
 
   Lbl := TNewStaticText.Create(LangPage);
   Lbl.Parent := LangPage.Surface;
@@ -188,13 +224,11 @@ begin
     LangCheckboxes[I] := TCheckBox.Create(LangPage);
     LangCheckboxes[I].Parent := LangPage.Surface;
     LangCheckboxes[I].Caption := GetLangLabel(I);
-    LangCheckboxes[I].Top := 30 + I * 28;
+    LangCheckboxes[I].Top := 30 + I * 22;
     LangCheckboxes[I].Left := 8;
     LangCheckboxes[I].Width := LangPage.SurfaceWidth - 16;
     LangCheckboxes[I].Checked := True;
   end;
-  { Indonesian (index 0) is the default target_lang — always required }
-  LangCheckboxes[0].Enabled := False;
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
