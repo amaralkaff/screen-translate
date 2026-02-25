@@ -83,7 +83,12 @@ if [[ "${BUNDLE_LT}" == true ]]; then
             PYTHON_VER=$("${VENV_PYTHON}" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
         fi
 
-        # 2. Copy the Python framework dylib and Python.app into the bundle
+        # 2. Get BASE_PREFIX BEFORE any patching (install_name_tool invalidates the signature
+        #    and macOS will refuse to run the binary until it's re-signed)
+        BASE_PREFIX=$("${REAL_PYTHON}" -c "import sys; print(sys.base_prefix)" 2>/dev/null || echo "")
+        echo "  BASE_PREFIX=${BASE_PREFIX}"
+
+        # 3. Copy the Python framework dylib and Python.app into the bundle
         #    The framework launcher (bin/python3) execs Resources/Python.app/Contents/MacOS/Python
         #    and both binaries link against the Python dylib. We must:
         #    a) Copy the dylib into lib/
@@ -119,8 +124,7 @@ if [[ "${BUNDLE_LT}" == true ]]; then
             fi
         fi
 
-        # 3. Copy the Python standard library (venv only has site-packages)
-        BASE_PREFIX=$("${REAL_PYTHON}" -c "import sys; print(sys.base_prefix)" 2>/dev/null || echo "")
+        # 4. Copy the Python standard library (venv only has site-packages)
         if [[ -n "${BASE_PREFIX}" && -d "${BASE_PREFIX}/lib/python${PYTHON_VER}" ]]; then
             STDLIB_SRC="${BASE_PREFIX}/lib/python${PYTHON_VER}"
             STDLIB_DST="${BUNDLE_LT_DIR}/lib/python${PYTHON_VER}"
@@ -130,16 +134,20 @@ if [[ "${BUNDLE_LT}" == true ]]; then
                      --exclude='__pycache__' --exclude='tkinter' --exclude='idlelib' \
                      --exclude='turtle*' --exclude='ensurepip' \
                      "${STDLIB_SRC}/" "${STDLIB_DST}/"
+            echo "  Stdlib copied: $(ls "${STDLIB_DST}" | wc -l) items"
+        else
+            echo "  WARNING: Could not find Python stdlib (BASE_PREFIX='${BASE_PREFIX}', PYTHON_VER='${PYTHON_VER}')"
+            echo "  The bundled Python will NOT work without the standard library!"
         fi
 
-        # 4. Fix pyvenv.cfg to be self-contained
+        # 5. Fix pyvenv.cfg to be self-contained
         cat > "${BUNDLE_LT_DIR}/pyvenv.cfg" <<PYCFG
 home = bin
 include-system-site-packages = false
 version = ${PYTHON_VER}
 PYCFG
 
-        # 5. Re-sign the modified binary (ad-hoc, for Gatekeeper)
+        # 6. Re-sign the modified binary (ad-hoc, for Gatekeeper)
         codesign --force -s - "${BUNDLE_LT_DIR}/bin/python3" 2>/dev/null || true
         if [[ -f "${BUNDLE_LT_DIR}/lib/${DYLIB_NAME:-}" ]]; then
             codesign --force -s - "${BUNDLE_LT_DIR}/lib/${DYLIB_NAME}" 2>/dev/null || true

@@ -152,6 +152,13 @@ impl LibreTranslateServer {
 
         cmd.args(["--host", "127.0.0.1", "--port", &port.to_string()]);
 
+        // Set PYTHONHOME so the bundled Python finds its stdlib inside the bundle
+        // instead of looking at the system framework path (which doesn't exist on user machines).
+        if let Some(venv_root) = Self::find_venv_root(&exe) {
+            tracing::info!("Setting PYTHONHOME to bundled venv: {}", venv_root.display());
+            cmd.env("PYTHONHOME", &venv_root);
+        }
+
         // Set ARGOS_PACKAGES_DIR to bundled packages location if available
         if let Some(bundled_dir) = Self::find_bundled_packages(&exe) {
             tracing::info!("Using bundled language packages: {}", bundled_dir.display());
@@ -236,6 +243,33 @@ impl LibreTranslateServer {
                 if dir_has_entries(&candidate) {
                     return Some(candidate);
                 }
+            }
+        }
+        None
+    }
+
+    /// Find the venv root directory for a bundled Python executable.
+    /// This is used to set PYTHONHOME so the bundled Python finds its stdlib.
+    /// e.g. exe = .../libretranslate/bin/python3 → venv_root = .../libretranslate/
+    fn find_venv_root(exe: &std::path::Path) -> Option<PathBuf> {
+        // For venv layout: exe = .../libretranslate/bin/python3
+        // venv_root = .../libretranslate/
+        if let Some(bin_dir) = exe.parent() {
+            if let Some(venv_root) = bin_dir.parent() {
+                // Verify it looks like a venv (has lib/python3.*)
+                if let Ok(lib_dir) = std::fs::read_dir(venv_root.join("lib")) {
+                    for entry in lib_dir.flatten() {
+                        if entry.file_name().to_string_lossy().starts_with("python3") {
+                            return Some(venv_root.to_path_buf());
+                        }
+                    }
+                }
+            }
+        }
+        // For embedded Python (Windows): exe = .../libretranslate/python.exe
+        if let Some(parent) = exe.parent() {
+            if parent.join("Lib").is_dir() {
+                return Some(parent.to_path_buf());
             }
         }
         None
@@ -546,6 +580,11 @@ print(f"Done: {{downloaded}} packages installed")
     cmd.args(["-c", &script]);
     cmd.env("ARGOS_PACKAGES_DIR", packages_dir);
 
+    // Set PYTHONHOME so bundled Python finds its stdlib
+    if let Some(venv_root) = LibreTranslateServer::find_venv_root(python_exe) {
+        cmd.env("PYTHONHOME", &venv_root);
+    }
+
     #[cfg(target_os = "windows")]
     {
         const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -591,6 +630,10 @@ print(",".join(sorted(codes)))
     let mut cmd = std::process::Command::new(python_exe);
     cmd.args(["-c", script]);
     cmd.env("ARGOS_PACKAGES_DIR", packages_dir);
+
+    if let Some(venv_root) = LibreTranslateServer::find_venv_root(python_exe) {
+        cmd.env("PYTHONHOME", &venv_root);
+    }
 
     #[cfg(target_os = "windows")]
     {
