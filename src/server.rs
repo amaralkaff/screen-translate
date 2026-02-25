@@ -159,6 +159,13 @@ impl LibreTranslateServer {
             cmd.env("PYTHONHOME", &venv_root);
         }
 
+        // Set SSL_CERT_FILE so the bundled Python can verify HTTPS certificates
+        // (the compiled-in OpenSSL cert path doesn't exist on user machines).
+        if let Some(cacert) = Self::find_certifi_cacert(&exe) {
+            tracing::info!("Setting SSL_CERT_FILE: {}", cacert.display());
+            cmd.env("SSL_CERT_FILE", &cacert);
+        }
+
         // Set ARGOS_PACKAGES_DIR to bundled packages location if available
         if let Some(bundled_dir) = Self::find_bundled_packages(&exe) {
             tracing::info!("Using bundled language packages: {}", bundled_dir.display());
@@ -243,6 +250,43 @@ impl LibreTranslateServer {
                 if dir_has_entries(&candidate) {
                     return Some(candidate);
                 }
+            }
+        }
+        None
+    }
+
+    /// Find the certifi CA bundle in the bundled Python environment.
+    /// Returns the path to cacert.pem if certifi is installed.
+    fn find_certifi_cacert(exe: &std::path::Path) -> Option<PathBuf> {
+        // Venv layout: exe = .../libretranslate/bin/python3
+        // certifi = .../libretranslate/lib/python3.*/site-packages/certifi/cacert.pem
+        if let Some(bin_dir) = exe.parent() {
+            if let Some(venv_root) = bin_dir.parent() {
+                if let Ok(lib_dir) = std::fs::read_dir(venv_root.join("lib")) {
+                    for entry in lib_dir.flatten() {
+                        if entry.file_name().to_string_lossy().starts_with("python3") {
+                            let cacert = entry
+                                .path()
+                                .join("site-packages")
+                                .join("certifi")
+                                .join("cacert.pem");
+                            if cacert.exists() {
+                                return Some(cacert);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Embedded Python (Windows): exe = .../libretranslate/python.exe
+        if let Some(parent) = exe.parent() {
+            let cacert = parent
+                .join("Lib")
+                .join("site-packages")
+                .join("certifi")
+                .join("cacert.pem");
+            if cacert.exists() {
+                return Some(cacert);
             }
         }
         None
@@ -584,6 +628,10 @@ print(f"Done: {{downloaded}} packages installed")
     if let Some(venv_root) = LibreTranslateServer::find_venv_root(python_exe) {
         cmd.env("PYTHONHOME", &venv_root);
     }
+    // Set SSL_CERT_FILE so HTTPS downloads work
+    if let Some(cacert) = LibreTranslateServer::find_certifi_cacert(python_exe) {
+        cmd.env("SSL_CERT_FILE", &cacert);
+    }
 
     #[cfg(target_os = "windows")]
     {
@@ -633,6 +681,9 @@ print(",".join(sorted(codes)))
 
     if let Some(venv_root) = LibreTranslateServer::find_venv_root(python_exe) {
         cmd.env("PYTHONHOME", &venv_root);
+    }
+    if let Some(cacert) = LibreTranslateServer::find_certifi_cacert(python_exe) {
+        cmd.env("SSL_CERT_FILE", &cacert);
     }
 
     #[cfg(target_os = "windows")]

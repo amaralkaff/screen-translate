@@ -135,6 +135,66 @@ if [[ "${BUNDLE_LT}" == true ]]; then
                      --exclude='turtle*' --exclude='ensurepip' \
                      "${STDLIB_SRC}/" "${STDLIB_DST}/"
             echo "  Stdlib copied: $(ls "${STDLIB_DST}" | wc -l) items"
+
+            # 4b. Bundle OpenSSL dylibs so _ssl and _hashlib modules work
+            #     (needed for HTTPS: language model downloads, minisbd, package index, etc.)
+            SSL_EXT=$(find "${STDLIB_DST}/lib-dynload" -name "_ssl*.so" 2>/dev/null | head -1)
+            HASH_EXT=$(find "${STDLIB_DST}/lib-dynload" -name "_hashlib*.so" 2>/dev/null | head -1)
+            if [[ -n "${SSL_EXT}" && -f "${SSL_EXT}" ]]; then
+                echo "  Bundling OpenSSL for SSL/HTTPS support..."
+
+                # Collect non-system dylib deps from _ssl and _hashlib
+                SSL_DEPS=""
+                for ext in "${SSL_EXT}" "${HASH_EXT}"; do
+                    [[ -f "${ext}" ]] || continue
+                    while IFS= read -r dep; do
+                        [[ "${dep}" == /usr/lib/* || "${dep}" == /System/* || "${dep}" == @* || -z "${dep}" ]] && continue
+                        DEP_NAME=$(basename "${dep}")
+                        # Skip duplicates
+                        echo "${SSL_DEPS}" | grep -qF "${DEP_NAME}" && continue
+                        SSL_DEPS="${SSL_DEPS} ${dep}"
+                    done < <(otool -L "${ext}" | awk 'NR>1{print $1}')
+                done
+
+                # Copy each OpenSSL dylib into BUNDLE_LT_DIR/lib/
+                for dep in ${SSL_DEPS}; do
+                    DEP_NAME=$(basename "${dep}")
+                    DEP_REAL=$(python3 -c "import os; print(os.path.realpath('${dep}'))" 2>/dev/null || echo "${dep}")
+                    if [[ -f "${DEP_REAL}" ]]; then
+                        echo "    Copying: ${DEP_NAME}"
+                        cp "${DEP_REAL}" "${BUNDLE_LT_DIR}/lib/${DEP_NAME}"
+                        chmod 644 "${BUNDLE_LT_DIR}/lib/${DEP_NAME}"
+                        install_name_tool -id "@rpath/${DEP_NAME}" "${BUNDLE_LT_DIR}/lib/${DEP_NAME}" 2>/dev/null || true
+                    fi
+                done
+
+                # Patch copied dylibs to find each other via @loader_path
+                for dep in ${SSL_DEPS}; do
+                    DEP_NAME=$(basename "${dep}")
+                    [[ -f "${BUNDLE_LT_DIR}/lib/${DEP_NAME}" ]] || continue
+                    for other_dep in ${SSL_DEPS}; do
+                        OTHER_NAME=$(basename "${other_dep}")
+                        [[ "${DEP_NAME}" == "${OTHER_NAME}" ]] && continue
+                        install_name_tool -change "${other_dep}" "@loader_path/${OTHER_NAME}" "${BUNDLE_LT_DIR}/lib/${DEP_NAME}" 2>/dev/null || true
+                    done
+                    codesign --force -s - "${BUNDLE_LT_DIR}/lib/${DEP_NAME}" 2>/dev/null || true
+                done
+
+                # Patch _ssl and _hashlib to find dylibs at @loader_path/../../
+                # Path: lib/python3.XX/lib-dynload/_ssl.so -> ../../ -> lib/libssl.3.dylib
+                for ext in "${SSL_EXT}" "${HASH_EXT}"; do
+                    [[ -f "${ext}" ]] || continue
+                    for dep in ${SSL_DEPS}; do
+                        DEP_NAME=$(basename "${dep}")
+                        install_name_tool -change "${dep}" "@loader_path/../../${DEP_NAME}" "${ext}" 2>/dev/null || true
+                    done
+                    codesign --force -s - "${ext}" 2>/dev/null || true
+                done
+
+                echo "  SSL support bundled."
+            else
+                echo "  WARNING: _ssl extension not found in lib-dynload — HTTPS will not work!"
+            fi
         else
             echo "  WARNING: Could not find Python stdlib (BASE_PREFIX='${BASE_PREFIX}', PYTHON_VER='${PYTHON_VER}')"
             echo "  The bundled Python will NOT work without the standard library!"
