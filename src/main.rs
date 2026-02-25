@@ -215,6 +215,23 @@ fn main() {
         }
     };
 
+    // Accessibility permission is needed to simulate Cmd+C for text selection.
+    // Without it, CGEventPost silently drops the keystroke and nothing gets copied.
+    #[cfg(target_os = "macos")]
+    if !platform::check_accessibility() {
+        tracing::warn!("Accessibility permission not granted — requesting...");
+        platform::show_error(
+            "Screen Translate — Permission Required",
+            "Accessibility permission is needed to copy selected text.\n\n\
+             Please enable this app in:\n\
+             System Settings > Privacy & Security > Accessibility\n\n\
+             Opening System Settings for you...\n\
+             After enabling, relaunch the app.",
+        );
+        platform::open_accessibility_settings();
+        return;
+    }
+
     let mut debounce_start: Option<Instant> = None;
     let mut pending_pos = SelectionPos { down_x: 0, down_y: 0, up_x: 0, up_y: 0 };
     let debounce_ms = Duration::from_millis(config.poll_interval_ms.max(50));

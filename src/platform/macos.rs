@@ -60,6 +60,11 @@ type CGEventTapCallBack = unsafe extern "C" fn(
     user_info: *mut c_void,
 ) -> CGEventRef;
 
+#[link(name = "ApplicationServices", kind = "framework")]
+extern "C" {
+    fn AXIsProcessTrusted() -> bool;
+}
+
 extern "C" {
     fn CGPreflightListenEventAccess() -> bool;
     fn CGRequestListenEventAccess() -> bool;
@@ -376,6 +381,18 @@ pub fn show_error(title: &str, msg: &str) {
 pub fn open_input_monitoring_settings() {
     let _ = std::process::Command::new("open")
         .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")
+        .spawn();
+}
+
+/// Check if the app has Accessibility permission (needed for Cmd+C simulation).
+pub fn check_accessibility() -> bool {
+    unsafe { AXIsProcessTrusted() }
+}
+
+/// Open System Settings to the Accessibility pane.
+pub fn open_accessibility_settings() {
+    let _ = std::process::Command::new("open")
+        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
         .spawn();
 }
 
