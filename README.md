@@ -102,7 +102,7 @@ py -3.12 -m venv ../libretranslate
 
 **macOS port 5000 conflict:** macOS uses port 5000 for AirPlay. screen-translate defaults to port 5001 on macOS.
 
-**macOS permission denied:** enable Input Monitoring in System Settings > Privacy & Security > Input Monitoring.
+**macOS permission denied:** enable both **Input Monitoring** and **Accessibility** in System Settings > Privacy & Security. The app needs Input Monitoring for mouse events and Accessibility for copy simulation (Cmd+C).
 
 **no popup:** check tray icon — monitoring might be toggled off.
 
@@ -110,5 +110,30 @@ py -3.12 -m venv ../libretranslate
 
 ## roadmap
 
-- [x] windows support
-- [x] macos support (CGEventTap + NSPanel)
+### done
+- [x] windows support (Win32 mouse hook + layered window)
+- [x] macos support (CGEventTap + NSPanel + Liquid Glass)
+- [x] bundled installer (Windows Inno Setup, macOS DMG)
+- [x] on-demand language downloads (18 languages)
+- [x] system tray with language switcher
+- [x] auto-update from GitHub releases
+- [x] accessibility + input monitoring permission checks (macOS)
+- [x] offline translation via bundled LibreTranslate
+
+### linux support
+- [ ] X11 text selection detection (XInput2 / XGrab)
+- [ ] Wayland text selection (wlr-data-control / portal API)
+- [ ] popup window (GTK4 or X11 overlay)
+- [ ] xdotool / wtype for copy simulation (Ctrl+C)
+- [ ] system tray via `StatusNotifierItem` / `XEmbed`
+- [ ] `.deb` and `.AppImage` packaging
+- [ ] CI build for `x86_64-unknown-linux-gnu`
+
+### planned
+- [ ] translation cache (avoid re-translating same text)
+- [ ] hotkey toggle (global shortcut to enable/disable)
+- [ ] OCR mode (translate text from images / non-selectable UI)
+- [ ] multiple translation engines (DeepL, Google, custom API)
+- [ ] dictionary mode (show definitions for single words)
+- [ ] theme support (light/dark/custom popup styles)
+- [ ] Apple Developer ID signing (preserve permissions across updates)
